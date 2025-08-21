@@ -1,5 +1,9 @@
 package cr.ed.ulacit;
 
+import cr.ed.ulacit.dto.AutobusDTO;
+import cr.ed.ulacit.dto.ParadaDTO;
+import cr.ed.ulacit.dto.RutaDTO;
+
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
@@ -9,38 +13,39 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * El panel de visualización principal para la simulación.
+ * Un panel de Swing que renderiza el estado de la simulación de autobuses.
  * <p>
- * Diseño: Esta clase extiende {@link JPanel} y su única responsabilidad es dibujar el estado actual
- * de la simulación. No contiene ninguna lógica de simulación; simplemente recibe los datos
- * (la lista de autobuses y la ruta) y los renderiza.
- * - Carga de recursos: La imagen del mapa se carga desde el classpath de recursos, lo que desacopla
- *   el código de la ubicación del archivo en el sistema de ficheros.
- * - Renderizado: El método {@link #paintComponent(Graphics)} se encarga de todo el dibujo.
- *   Se utiliza {@link Graphics2D} para acceder a opciones de renderizado avanzadas como el antialiasing,
- *   mejorando la calidad visual de las líneas y formas.
+ * Esta clase es responsable de toda la representación gráfica:
+ * <ul>
+ *     <li>Dibuja una imagen de fondo como mapa.</li>
+ *     <li>Dibuja la ruta de los autobuses como una serie de líneas y cuadrados.</li>
+ *     <li>Dibuja cada autobús como un óvalo de color en su posición actual.</li>
+ * </ul>
+ * El panel se actualiza a través de los métodos {@code setRuta} y {@code setAutobuses},
+ * que son llamados por la {@link ClienteGUI} cuando se reciben nuevos datos del servidor.
+ * </p>
  */
 public class MapaPanel extends JPanel {
 
-    private final Ruta ruta;
-    private final List<Autobus> autobuses;
+    private RutaDTO ruta;
+    private List<AutobusDTO> autobuses;
     private BufferedImage mapaImagen;
 
     /**
      * Constructor del panel del mapa.
      *
-     * @param autobuses La lista de autobuses a dibujar.
-     * @param ruta La ruta (con sus paradas) a dibujar.
+     * @param autobuses La lista inicial de autobuses a dibujar (puede estar vacía).
+     * @param ruta      La ruta inicial a dibujar (puede ser nula).
      */
-    public MapaPanel(List<Autobus> autobuses, Ruta ruta) {
+    public MapaPanel(List<AutobusDTO> autobuses, RutaDTO ruta) {
         this.autobuses = autobuses;
         this.ruta = ruta;
         cargarImagenDeMapa();
     }
 
     /**
-     * Carga la imagen de fondo del mapa desde los recursos del proyecto.
-     * Si no se encuentra, imprime un error pero permite que la simulación continúe sin fondo.
+     * Carga la imagen del mapa desde los recursos del proyecto.
+     * Si no se encuentra la imagen, se imprime un error en la consola.
      */
     private void cargarImagenDeMapa() {
         try (InputStream is = getClass().getResourceAsStream("/cr/ed/ulacit/mapa_cr.png")) {
@@ -57,38 +62,35 @@ public class MapaPanel extends JPanel {
     }
 
     /**
-     * El corazón del renderizado. Este método es llamado por Swing cada vez que el panel necesita ser redibujado.
-     * Dibuja el mapa de fondo, luego la ruta, las paradas y finalmente los autobuses.
+     * El método principal de dibujado de Swing. Se llama automáticamente cuando el panel necesita ser repintado.
      *
-     * @param g El contexto gráfico proporcionado por Swing para dibujar.
+     * @param g El contexto gráfico en el que dibujar.
      */
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2d = (Graphics2D) g;
 
-        // 1. Dibuja la imagen de fondo del mapa
+        // Dibuja el mapa de fondo
         if (mapaImagen != null) {
             g2d.drawImage(mapaImagen, 0, 0, getWidth(), getHeight(), this);
         }
 
-        // Activa el antialiasing para suavizar las formas y líneas
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // 2. Dibuja la ruta y las paradas
+        // Dibuja la ruta
         if (ruta != null) {
-            // Dibuja las líneas de la ruta
-            g2d.setColor(new Color(0, 0, 255, 150)); // Azul semitransparente
+            g2d.setColor(new Color(0, 0, 255, 150));
             g2d.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             for (int i = 0; i < ruta.getParadas().size() - 1; i++) {
-                Parada p1 = ruta.getParadas().get(i);
-                Parada p2 = ruta.getParadas().get(i + 1);
+                ParadaDTO p1 = ruta.getParadas().get(i);
+                ParadaDTO p2 = ruta.getParadas().get(i + 1);
                 g2d.drawLine(p1.getCoordX(), p1.getCoordY(), p2.getCoordX(), p2.getCoordY());
             }
 
-            // Dibuja las paradas como cuadrados y sus nombres
+            // Dibuja las paradas
             g2d.setStroke(new BasicStroke(1));
-            for (Parada parada : ruta.getParadas()) {
+            for (ParadaDTO parada : ruta.getParadas()) {
                 g2d.setColor(Color.BLACK);
                 g2d.fillRect(parada.getCoordX() - 5, parada.getCoordY() - 5, 10, 10);
                 g2d.setColor(Color.DARK_GRAY);
@@ -96,17 +98,36 @@ public class MapaPanel extends JPanel {
             }
         }
 
-        // 3. Dibuja los autobuses
-        for (Autobus bus : autobuses) {
-            // Solo dibuja los autobuses que están en ruta o han finalizado
-            if (bus.getEstado() != Autobus.EstadoAutobus.INACTIVO) {
+        // Dibuja los autobuses
+        for (AutobusDTO bus : autobuses) {
+            if (bus.getEstado() != EstadoAutobus.INACTIVO) {
                 g2d.setColor(bus.getColor());
-                g2d.fillOval(bus.getX() - 10, bus.getY() - 10, 20, 20); // Círculo del bus
+                g2d.fillOval(bus.getX() - 10, bus.getY() - 10, 20, 20);
                 g2d.setColor(Color.BLACK);
-                g2d.drawOval(bus.getX() - 10, bus.getY() - 10, 20, 20); // Borde del círculo
+                g2d.drawOval(bus.getX() - 10, bus.getY() - 10, 20, 20);
                 g2d.setColor(Color.WHITE);
-                g2d.drawString(String.valueOf(bus.getId()), bus.getX() - 3, bus.getY() + 4); // ID del bus
+                g2d.drawString(String.valueOf(bus.getId()), bus.getX() - 3, bus.getY() + 4);
             }
         }
+    }
+
+    /**
+     * Actualiza la ruta que se muestra en el mapa y solicita un repintado.
+     *
+     * @param ruta El nuevo DTO de la ruta.
+     */
+    public void setRuta(RutaDTO ruta) {
+        this.ruta = ruta;
+        repaint();
+    }
+
+    /**
+     * Actualiza la lista de autobuses que se muestran en el mapa y solicita un repintado.
+     *
+     * @param autobuses La nueva lista de DTOs de autobuses.
+     */
+    public void setAutobuses(List<AutobusDTO> autobuses) {
+        this.autobuses = autobuses;
+        repaint();
     }
 }

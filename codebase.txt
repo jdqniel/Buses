@@ -1,0 +1,137 @@
+Análisis Detallado de la Arquitectura y Funcionamiento del Simulador de Autobuses
+
+================================================================================
+
+### Capítulo 1: Introducción y Arquitectura General
+
+#### 1.1. Propósito de la Simulación
+
+El objetivo fundamental de este proyecto es crear una simulación visual y dinámica del sistema de transporte de autobuses en la ruta San José - Paso Canoas. La aplicación no solo muestra el movimiento de los vehículos, sino que también gestiona un ciclo de vida para cada uno, simula el paso del tiempo y registra eventos clave, ofreciendo una representación visual completa y fácil de seguir de un sistema logístico complejo.
+
+#### 1.2. Evolución de la Arquitectura: De Cliente-Servidor a Autónoma
+
+Inicialmente, el proyecto fue concebido con una arquitectura cliente-servidor. En ese modelo, un servidor centralizado se encargaba de toda la lógica de la simulación (mover los autobuses, gestionar el tiempo) y enviaba actualizaciones de estado a uno o más clientes a través de la red (usando UDP). Los clientes eran meramente visores pasivos.
+
+Esta arquitectura fue **refactorizada a un modelo de aplicación de escritorio autónoma (monolítica)**. La decisión se tomó para:
+- **Simplificar la Presentación:** Eliminar la complejidad de la comunicación por red permite centrarse en la calidad de la simulación visual y la lógica de la interfaz.
+- **Facilitar la Ejecución:** No requiere iniciar un servidor y un cliente por separado, lo que hace que la aplicación sea más fácil de probar y demostrar.
+- **Consolidar la Lógica:** Toda la lógica de la simulación ahora reside dentro de la propia aplicación cliente, gestionada por la clase `ClienteGUI`.
+
+#### 1.3. El Patrón Modelo-Vista-Controlador (MVC) en la Práctica
+
+Aunque no se declara explícitamente, la arquitectura del proyecto sigue de cerca los principios del patrón de diseño **Modelo-Vista-Controlador (MVC)**, un estándar en el desarrollo de interfaces gráficas:
+
+- **Modelo:** Representa los datos y la lógica de negocio. En este proyecto, el Modelo está compuesto por las clases `Autobus`, `Ruta` y `Parada`. Estas clases no saben nada sobre cómo se van a mostrar; solo gestionan su propio estado y comportamiento (ej. el método `mover()` en `Autobus`).
+
+- **Vista:** Es la representación visual del Modelo. La clase `MapaPanel` es la Vista pura. Su única responsabilidad es dibujar el estado actual de los autobuses y la ruta. No modifica los datos, solo los lee para renderizarlos.
+
+- **Controlador:** Actúa como el intermediario entre el Modelo y la Vista. La clase `ClienteGUI` asume este rol. Escucha las acciones (en este caso, los "ticks" del `Timer`), actualiza el Modelo (llama a `autobus.mover()`) y le dice a la Vista que se actualice (`mapaPanel.repaint()`). También maneja los eventos que el Modelo le notifica (a través del `AutobusListener`).
+
+Esta separación es crucial porque permite modificar cada parte de forma independiente. Por ejemplo, podríamos cambiar la representación visual en `MapaPanel` (de 2D a 3D) sin tocar la lógica de `Autobus`, o podríamos cambiar la velocidad de la simulación en `ClienteGUI` sin afectar a las otras dos partes.
+
+--- 
+
+### Capítulo 2: Los Modelos de Datos - El Fundamento de la Simulación
+
+Los modelos de datos son las clases que representan las entidades del mundo real en nuestro código. Son la base sobre la que se construye toda la lógica.
+
+#### 2.1. La Clase `Parada`
+
+- **Análisis Detallado:** `Parada` es la unidad más básica de nuestra ruta. Es un simple "Value Object" o POJO (Plain Old Java Object). Sus atributos (`id`, `nombre`, `coordX`, `coordY`) definen todo lo necesario para identificar una parada y dibujarla. Las coordenadas `coordX` y `coordY` son fundamentales, ya que traducen una ubicación geográfica a un punto específico en el lienzo 2D del `JPanel`.
+- **La Decisión de la Inmutabilidad:** Los atributos de `Parada` son `final` y se establecen únicamente en el constructor. Esto significa que una vez que se crea un objeto `Parada`, no puede ser modificado. Esta es una decisión de diseño deliberada para garantizar la **integridad de la ruta**. Si las paradas pudieran cambiar sus coordenadas a mitad de la simulación, podría llevar a comportamientos impredecibles. La inmutabilidad elimina esta clase de errores.
+
+#### 2.2. La Clase `Ruta`
+
+- **Análisis Detallado:** `Ruta` no es más que una colección ordenada de objetos `Parada`. Utiliza una `List<Parada>` para mantener la secuencia correcta del trayecto. El orden en esta lista es crítico, ya que define el camino exacto que seguirán los autobuses.
+- **Composición sobre Herencia:** `Ruta` *contiene* una lista de paradas (composición), en lugar de *ser* una lista de paradas (herencia). Este es un principio de diseño preferido porque ofrece más flexibilidad y no expone todos los métodos de `List` innecesariamente. `Ruta` solo expone los métodos que son lógicos para su propósito (`getParadas`, `getParadaPorIndice`, etc.).
+
+--- 
+
+### Capítulo 3: El Corazón Dinámico - La Clase `Autobus`
+
+Esta es la clase más compleja y el actor principal de la simulación.
+
+#### 3.1. La Máquina de Estados Finita: `EstadoAutobus`
+
+El ciclo de vida de un autobús se modela como una máquina de estados finita, representada por el `enum EstadoAutobus`. Un `enum` es ideal para esto porque limita los posibles estados a un conjunto predefinido, evitando errores por valores inválidos.
+- **`INACTIVO`:** El estado inicial. El autobús existe pero no se mueve ni se dibuja. Está esperando ser despachado.
+- **`EN_RUTA`:** El estado principal. El autobús se está moviendo y es visible en el mapa. Solo en este estado se ejecuta la lógica del método `mover()`.
+- **`FINALIZADO`:** El estado terminal. El autobús ha completado su recorrido. Permanece visible en su última parada pero ya no se actualiza.
+
+Las transiciones son manejadas por `ClienteGUI` (`INACTIVO` -> `EN_RUTA`) y por el propio autobús (`EN_RUTA` -> `FINALIZADO`).
+
+#### 3.2. El Patrón Observer en Acción: `AutobusListener`
+
+Para que la simulación sea interactiva, el Modelo (`Autobus`) necesita una forma de comunicar eventos importantes al Controlador (`ClienteGUI`). Una solución simple sería pasar una referencia de `ClienteGUI` al `Autobus`, pero esto crearía un **acoplamiento fuerte** (el autobús dependería directamente de la GUI).
+
+El patrón *Listener* (una forma del patrón *Observer*) resuelve esto elegantemente:
+1. Se define una interfaz (`AutobusListener`) que declara los eventos que pueden ocurrir (`onLlegadaAParada`, `onRutaFinalizada`).
+2. La clase `ClienteGUI` *implementa* esta interfaz, proporcionando el código que se debe ejecutar cuando ocurre un evento.
+3. Al crear un `Autobus`, se le pasa una referencia a `ClienteGUI` *como un `AutobusListener`*. El autobús no sabe que es una `ClienteGUI`, solo sabe que es "algo que puede escuchar sus eventos".
+
+Este desacoplamiento es poderoso. Podríamos tener otros objetos que escuchen los eventos del autobús (por ejemplo, un sistema de estadísticas) sin cambiar una sola línea de código en la clase `Autobus`.
+
+#### 3.3. La Lógica del Movimiento: El Método `mover()`
+
+Este método es el núcleo matemático de la simulación. Se ejecuta en cada "tick" del `Timer` para cada autobús activo.
+
+1.  **Validación:** Primero, comprueba si el autobús está `EN_RUTA`. Si no, no hace nada.
+2.  **Avance:** Incrementa el `progreso` del autobús. Esta variable va de `0.0` (en la parada de origen) a `1.0` (en la parada de destino).
+3.  **Detección de Llegada:** Si `progreso` supera `1.0`, significa que el autobús ha llegado (o superado) su destino. En este punto, se "ajusta" su posición a las coordenadas exactas de la parada de destino, se reinicia el `progreso` a `0.0`, se actualizan los índices de parada y se notifica al *listener*.
+4.  **Interpolación Lineal:** Si el autobús está entre paradas (`0.0 < progreso < 1.0`), su posición se calcula mediante una **interpolación lineal**. La fórmula es:
+    `nueva_coordenada = coordenada_origen + (coordenada_destino - coordenada_origen) * progreso`
+    Esto se aplica tanto para `x` como para `y`. Efectivamente, calcula un punto en la línea recta entre la parada de origen y la de destino, basado en qué tan "lejos" ha avanzado (`progreso`).
+
+--- 
+
+### Capítulo 4: La Representación Visual - La Clase `MapaPanel`
+
+#### 4.1. El Ciclo de Vida del Dibujo: `paintComponent()`
+
+En Swing, el dibujo personalizado se realiza sobrescribiendo el método `paintComponent(Graphics g)`. Este método es llamado por el sistema de renderizado de Swing siempre que el componente necesita ser dibujado (al aparecer por primera vez, al redimensionarse, o cuando se le pide explícitamente con `repaint()`).
+
+- **`super.paintComponent(g)`:** Es crucial llamar a este método al principio para que el `JPanel` pueda realizar su propio trabajo de limpieza y dibujado de fondo.
+- **`Graphics2D`:** El objeto `Graphics` se convierte a `Graphics2D` para acceder a funciones avanzadas. El **antialiasing** (`RenderingHints.KEY_ANTIALIASING`) es una de las más importantes, ya que suaviza las líneas diagonales y los bordes de los círculos, resultando en una apariencia mucho más profesional.
+
+#### 4.2. Proceso de Renderizado en Capas
+
+El método `paintComponent` dibuja los elementos en un orden específico para crear un efecto de capas, similar a como se trabajaría en un programa de diseño gráfico:
+1.  **Capa 1 (Fondo):** Se dibuja la imagen del mapa, ocupando todo el panel.
+2.  **Capa 2 (Infraestructura):** Se dibujan las líneas que conectan las paradas y luego los cuadrados que representan cada parada.
+3.  **Capa 3 (Actores Dinámicos):** Finalmente, se dibujan los autobuses. Se itera sobre la lista y se dibuja cada uno en sus coordenadas `(x, y)` actuales. Se dibujan solo si no están `INACTIVO`.
+
+Este orden asegura que los autobuses siempre aparezcan por encima de la ruta y el mapa.
+
+--- 
+
+### Capítulo 5: El Orquestador - La Clase `ClienteGUI`
+
+#### 5.1. El Motor de la Simulación: El `javax.swing.Timer`
+
+La animación se logra mediante un `javax.swing.Timer`. Esta es la elección correcta para aplicaciones Swing por una razón fundamental relacionada con los hilos de ejecución (threads):
+
+- **El Event Dispatch Thread (EDT):** Todas las actualizaciones de la interfaz de usuario en Swing deben ocurrir en un único hilo llamado EDT. Si intentaras actualizar la GUI desde otro hilo, te arriesgarías a condiciones de carrera y errores impredecibles. Un bucle con `Thread.sleep()` en el hilo principal, por ejemplo, congelaría toda la interfaz.
+- **La Solución del `Timer`:** El `javax.swing.Timer` está diseñado para trabajar con Swing. Ejecuta su lógica de acción (`actionPerformed`) directamente en el EDT, garantizando que todas las llamadas a `repaint()` y las actualizaciones de componentes sean seguras.
+
+#### 5.2. El Flujo Detallado de `actualizarSimulacion()`
+
+Este método es el cerebro del `Timer`. En cada tick, realiza una secuencia de operaciones:
+1.  **Avanza el Reloj:** Incrementa el `Calendar` interno para simular el paso del tiempo.
+2.  **Despacha un Autobús:** Comprueba si han pasado 15 segundos de tiempo real desde la última salida. Si es así y todavía hay autobuses en la cola, toma el siguiente, llama a `iniciarRuta()`, y registra el evento.
+3.  **Mueve los Autobuses:** Itera por toda la flota y llama al método `mover()` de cada autobús que esté `EN_RUTA`, pasándole una velocidad ligeramente aleatoria para que no todos se muevan al unísono.
+
+#### 5.3. `ClienteGUI` como Controlador y Listener
+
+`ClienteGUI` centraliza la lógica de control. Al implementar `Autobus.AutobusListener`, se convierte en el receptor de todos los eventos de la simulación. Cuando un autobús notifica una llegada, `ClienteGUI` recibe la llamada y ejecuta el código para añadir una línea al `JTextArea`. De nuevo, es importante que esta actualización del `JTextArea` se haga dentro de `SwingUtilities.invokeLater()`, para asegurar que la modificación del componente de texto ocurra de forma segura en el EDT, especialmente si en el futuro la lógica del autobús se moviera a un hilo separado.
+
+--- 
+
+### Capítulo 6: Conclusión y Posibles Mejoras
+
+- **Resumen:** La aplicación es un ejemplo sólido de una simulación de escritorio construida con buenas prácticas de POO y diseño de GUI. La separación de responsabilidades (MVC), el uso de un motor de tiempo basado en `Timer`, y la comunicación desacoplada mediante *Listeners* son los pilares de su arquitectura.
+
+- **Posibles Mejoras:**
+    - **Interactividad:** Permitir al usuario hacer clic en un autobús para ver sus estadísticas (velocidad, próxima parada).
+    - **Controles de Simulación:** Añadir botones para pausar, reanudar y acelerar la simulación.
+    - **Estadísticas:** Mostrar un panel con datos en tiempo real (número de autobuses activos, rutas completadas).
+    - **Rutas Múltiples:** Permitir al usuario seleccionar entre diferentes rutas para simular.
